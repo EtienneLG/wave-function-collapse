@@ -15,6 +15,10 @@ type SocketId = usize;
 type Mask = u128;
 type HeapEntry = (Reverse<u32>, u32, usize);
 
+const DEFAULT_WIDTH: usize = 100;
+const DEFAULT_HEIGHT: usize = 100;
+const MAX_TILES: usize = Mask::BITS as usize;
+
 #[derive(Debug, Clone, Copy)]
 enum Direction {
     North,
@@ -60,15 +64,13 @@ struct Config {
 struct Tile {
     name: String,
     rotation: usize, // number of 90° clockwise turns
-    sockets: [SocketId; 4],
-    allowed: [Mask; 4],
 }
 
 #[derive(Debug)]
 struct Tileset {
     format: String,
     tiles: Vec<Tile>,
-    sockets: Vec<Socket>,
+    allowed: [Vec<Mask>; 4],
 }
 
 #[derive(Debug, Clone)]
@@ -103,32 +105,28 @@ impl Direction {
 }
 
 impl Tileset {
-    fn from_config(config: Config) -> Self {
-        let mut sockets: Vec<Socket> = Vec::new();
-        let mut tiles: Vec<Tile> = Vec::new();
+    fn from_config(config: Config) -> Result<Self, String> {
+        fn intern(ids: &mut HashMap<String, SocketId>, socket: Socket) -> SocketId {
+            let next = ids.len();
+            *ids.entry(socket.0).or_insert(next)
+        }
 
-        let register_socket = |known: &mut Vec<Socket>, socket: Socket| -> SocketId {
-            match known.iter().position(|s| s.0 == socket.0) {
-                Some(id) => id,
-                None => {
-                    known.push(socket);
-                    known.len() - 1
-                }
-            }
-        };
+        let mut socket_ids: HashMap<String, SocketId> = HashMap::new();
+        let mut tiles: Vec<Tile> = Vec::new();
+        let mut sockets: Vec<[SocketId; 4]> = Vec::new();
 
         for original in config.tiles {
             let adj = original.adjacencies;
 
             let base: [SocketId; 4] = [
-                register_socket(&mut sockets, adj.north),
-                register_socket(&mut sockets, adj.east),
-                register_socket(&mut sockets, adj.south),
-                register_socket(&mut sockets, adj.west),
+                intern(&mut socket_ids, adj.north),
+                intern(&mut socket_ids, adj.east),
+                intern(&mut socket_ids, adj.south),
+                intern(&mut socket_ids, adj.west),
             ];
 
             let turns = if original.rotate { 4 } else { 1 };
-            let first_variant = tiles.len();
+            let first_variant = sockets.len();
 
             for rotation in 0..turns {
                 let mut rotated: [SocketId; 4] = [0; 4];
@@ -136,46 +134,61 @@ impl Tileset {
                     rotated[dir.rotate(rotation) as usize] = base[dir as usize];
                 }
 
-                let duplicate = tiles[first_variant..].iter().any(|t| t.sockets == rotated);
-                if duplicate {
+                if sockets[first_variant..].contains(&rotated) {
                     continue;
                 }
 
                 tiles.push(Tile {
                     name: original.name.clone(),
                     rotation,
-                    sockets: rotated,
-                    allowed: [0; 4],
                 });
+                sockets.push(rotated);
             }
         }
 
-        let mut fits: Vec<SocketId> = (0..sockets.len()).collect();
-        for pair in config.pairs {
-            let a = register_socket(&mut sockets, pair.a);
-            let b = register_socket(&mut sockets, pair.b);
+        if tiles.is_empty() {
+            return Err("tileset contains no tiles".into());
+        }
+        if tiles.len() > MAX_TILES {
+            return Err(format!(
+                "tileset expands to {} tiles (including rotations), maximum is {MAX_TILES}",
+                tiles.len()
+            ));
+        }
+
+        let pairs: Vec<(SocketId, SocketId)> = config
+            .pairs
+            .into_iter()
+            .map(|pair| {
+                (
+                    intern(&mut socket_ids, pair.a),
+                    intern(&mut socket_ids, pair.b),
+                )
+            })
+            .collect();
+
+        let mut fits: Vec<SocketId> = (0..socket_ids.len()).collect();
+        for (a, b) in pairs {
             fits[a] = b;
             fits[b] = a;
         }
 
         let n = tiles.len();
+        let mut allowed: [Vec<Mask>; 4] = std::array::from_fn(|_| vec![0; n]);
         for dir in Direction::ALL {
+            let d = dir as usize;
             for a in 0..n {
-                let mask: Mask = (0..n)
-                    .filter(|&b| {
-                        tiles[a].sockets[dir as usize]
-                            == fits[tiles[b].sockets[dir.opposite() as usize]]
-                    })
+                allowed[d][a] = (0..n)
+                    .filter(|&b| sockets[a][d] == fits[sockets[b][dir.opposite() as usize]])
                     .fold(0 as Mask, |m, b| m | (1 << b));
-                tiles[a].allowed[dir as usize] = mask;
             }
         }
 
-        Self {
+        Ok(Self {
             format: config.format,
             tiles,
-            sockets,
-        }
+            allowed,
+        })
     }
 
     fn load_images(&self, dir: &Path) -> Result<Vec<RgbaImage>, Box<dyn Error>> {
@@ -288,7 +301,7 @@ impl Grid {
                 while bits != 0 {
                     let t = bits.trailing_zeros() as usize;
                     bits &= bits - 1;
-                    support |= tileset.tiles[t].allowed[dir as usize];
+                    support |= tileset.allowed[dir as usize][t];
                 }
 
                 let old = self.cells[n].possible;
@@ -334,9 +347,6 @@ impl Grid {
         Ok(canvas)
     }
 }
-
-const DEFAULT_WIDTH: usize = 100;
-const DEFAULT_HEIGHT: usize = 100;
 
 fn parse_args(
     args: impl IntoIterator<Item = OsString>,
@@ -401,7 +411,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         )
     })?;
     let config: Config = toml::from_str(&text)?;
-    let tileset: Tileset = Tileset::from_config(config);
+    let tileset: Tileset = Tileset::from_config(config)?;
     let mut rng = rand::rng();
     let mut grid: Grid = Grid::new(width, height, tileset.tiles.len(), &mut rng);
 
