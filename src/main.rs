@@ -18,6 +18,7 @@ type HeapEntry = (Reverse<u32>, u32, usize);
 const DEFAULT_WIDTH: usize = 100;
 const DEFAULT_HEIGHT: usize = 100;
 const MAX_TILES: usize = Mask::BITS as usize;
+const ENTROPY_SCALE: f64 = 1_000_000.0;
 
 #[derive(Debug, Clone, Copy)]
 enum Direction {
@@ -44,11 +45,17 @@ struct Adjacencies {
     west: Socket,
 }
 
+fn default_weight() -> u32 {
+    1
+}
+
 #[derive(Debug, Deserialize)]
 struct OriginalTile {
     name: String,
     #[serde(default)]
     rotate: bool,
+    #[serde(default = "default_weight")]
+    weight: u32,
     adjacencies: Adjacencies,
 }
 
@@ -70,6 +77,7 @@ struct Tile {
 struct Tileset {
     format: String,
     tiles: Vec<Tile>,
+    weights: Vec<u32>, // parallel to `tiles`, every entry >= 1
     allowed: [Vec<Mask>; 4],
 }
 
@@ -104,6 +112,17 @@ impl Direction {
     }
 }
 
+fn set_bits(mut mask: Mask) -> impl Iterator<Item = usize> {
+    std::iter::from_fn(move || {
+        if mask == 0 {
+            return None;
+        }
+        let tile = mask.trailing_zeros() as usize;
+        mask &= mask - 1;
+        Some(tile)
+    })
+}
+
 impl Tileset {
     fn from_config(config: Config) -> Result<Self, String> {
         fn intern(ids: &mut HashMap<String, SocketId>, socket: Socket) -> SocketId {
@@ -113,9 +132,18 @@ impl Tileset {
 
         let mut socket_ids: HashMap<String, SocketId> = HashMap::new();
         let mut tiles: Vec<Tile> = Vec::new();
+        let mut weights: Vec<u32> = Vec::new();
         let mut sockets: Vec<[SocketId; 4]> = Vec::new();
 
         for original in config.tiles {
+            if original.weight == 0 {
+                return Err(format!(
+                    "tile `{}` has weight 0; weights must be at least 1",
+                    original.name
+                ));
+            }
+
+            let weight = original.weight;
             let adj = original.adjacencies;
 
             let base: [SocketId; 4] = [
@@ -142,6 +170,7 @@ impl Tileset {
                     name: original.name.clone(),
                     rotation,
                 });
+                weights.push(weight);
                 sockets.push(rotated);
             }
         }
@@ -155,6 +184,12 @@ impl Tileset {
                 tiles.len()
             ));
         }
+
+        weights.iter().try_fold(0u64, |acc, &weight| {
+            acc.checked_add(u64::from(weight))
+                .ok_or_else(|| "total tile weight exceeds u64::MAX".to_string())
+        })?;
+        debug_assert_eq!(tiles.len(), weights.len());
 
         let pairs: Vec<(SocketId, SocketId)> = config
             .pairs
@@ -187,8 +222,49 @@ impl Tileset {
         Ok(Self {
             format: config.format,
             tiles,
+            weights,
             allowed,
         })
+    }
+
+    // Shannon entropy of the weighted possibilities, quantized to 1e-6 bits:
+    // `H = log2(W) - (1/W) * sum(w_t * log2(w_t))` with `W = sum(w_t)`.
+    fn entropy_units(&self, possible: Mask) -> u32 {
+        let mut total: u64 = 0;
+        let mut weighted_log_sum: f64 = 0.0;
+
+        for t in set_bits(possible) {
+            let weight = u64::from(self.weights[t]);
+            let weight_f = weight as f64;
+            total += weight;
+            weighted_log_sum += weight_f * weight_f.log2();
+        }
+
+        debug_assert!(total > 0, "possible cell set must be non-empty");
+        let total_f = total as f64;
+        let entropy = total_f.log2() - weighted_log_sum / total_f;
+        (entropy * ENTROPY_SCALE).round() as u32
+    }
+
+    // Picks a tile from `possible` with probability proportional to its weight.
+    // Returns the absolute index into `self.tiles`. `possible` must be non-empty.
+    fn choose_weighted(&self, possible: Mask, rng: &mut impl Rng) -> usize {
+        let total: u64 = set_bits(possible)
+            .map(|t| u64::from(self.weights[t]))
+            .sum();
+
+        debug_assert!(total > 0);
+        let mut roll = rng.random_range(0..total);
+
+        for t in set_bits(possible) {
+            let weight = u64::from(self.weights[t]);
+            if roll < weight {
+                return t;
+            }
+            roll -= weight;
+        }
+
+        unreachable!("possible set is non-empty and all weights are at least 1")
     }
 
     fn load_images(&self, dir: &Path) -> Result<Vec<RgbaImage>, Box<dyn Error>> {
@@ -219,7 +295,8 @@ impl Tileset {
 }
 
 impl Grid {
-    fn new(width: usize, height: usize, tile_count: usize, rng: &mut impl Rng) -> Self {
+    fn new(width: usize, height: usize, tileset: &Tileset, rng: &mut impl Rng) -> Self {
+        let tile_count = tileset.tiles.len();
         let all: Mask = if tile_count >= 128 {
             Mask::MAX
         } else {
@@ -237,21 +314,22 @@ impl Grid {
             heap: BinaryHeap::new(),
             noise,
         };
-        grid.rebuild_heap();
+        grid.rebuild_heap(tileset);
         grid
     }
 
-    fn rebuild_heap(&mut self) {
+    fn rebuild_heap(&mut self, tileset: &Tileset) {
         self.heap.clear();
         for i in 0..self.cells.len() {
-            self.push_entropy(i);
+            self.push_entropy(tileset, i);
         }
     }
 
-    fn push_entropy(&mut self, i: usize) {
-        let count = self.cells[i].possible.count_ones();
-        if count > 1 {
-            self.heap.push((Reverse(count), self.noise[i], i));
+    fn push_entropy(&mut self, tileset: &Tileset, i: usize) {
+        let possible = self.cells[i].possible;
+        if possible.count_ones() > 1 {
+            self.heap
+                .push((Reverse(tileset.entropy_units(possible)), self.noise[i], i));
         }
     }
 
@@ -265,23 +343,19 @@ impl Grid {
         }
     }
 
-    fn pop_lowest_entropy(&mut self) -> Option<usize> {
-        while let Some((Reverse(count), _, i)) = self.heap.pop() {
-            let current = self.cells[i].possible.count_ones();
-            if current == count && current > 1 {
+    fn pop_lowest_entropy(&mut self, tileset: &Tileset) -> Option<usize> {
+        while let Some((Reverse(entropy), _, i)) = self.heap.pop() {
+            let possible = self.cells[i].possible;
+            if possible.count_ones() > 1 && tileset.entropy_units(possible) == entropy {
                 return Some(i);
             }
         }
         None
     }
 
-    fn collapse(&mut self, tileset: &Tileset, i: usize, choice: usize) -> Result<(), usize> {
-        let mut bits = self.cells[i].possible;
-        for _ in 0..choice {
-            bits &= bits - 1;
-        }
-        let t = bits.trailing_zeros();
-        self.cells[i].possible = 1 << t;
+    fn collapse(&mut self, tileset: &Tileset, i: usize, tile: usize) -> Result<(), usize> {
+        debug_assert!(self.cells[i].possible & ((1 as Mask) << tile) != 0);
+        self.cells[i].possible = (1 as Mask) << tile;
         self.propagate(tileset, i)
     }
 
@@ -315,7 +389,7 @@ impl Grid {
                 }
 
                 self.cells[n].possible = new;
-                self.push_entropy(n);
+                self.push_entropy(tileset, n);
                 stack.push(n);
             }
         }
@@ -413,12 +487,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config: Config = toml::from_str(&text)?;
     let tileset: Tileset = Tileset::from_config(config)?;
     let mut rng = rand::rng();
-    let mut grid: Grid = Grid::new(width, height, tileset.tiles.len(), &mut rng);
+    let mut grid: Grid = Grid::new(width, height, &tileset, &mut rng);
 
-    while let Some(i) = grid.pop_lowest_entropy() {
-        let count = grid.cells[i].possible.count_ones() as usize;
-        let choice = rng.random_range(0..count);
-        match grid.collapse(&tileset, i, choice) {
+    while let Some(i) = grid.pop_lowest_entropy(&tileset) {
+        let possible = grid.cells[i].possible;
+        let tile = tileset.choose_weighted(possible, &mut rng);
+        match grid.collapse(&tileset, i, tile) {
             Ok(()) => {}
             Err(cell_index) => {
                 let x = cell_index % grid.width;
