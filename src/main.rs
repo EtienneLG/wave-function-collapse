@@ -102,20 +102,20 @@ impl Direction {
     }
 }
 
-fn register_socket(known: &mut Vec<Socket>, socket: Socket) -> SocketId {
-    match known.iter().position(|s| s.0 == socket.0) {
-        Some(id) => id,
-        None => {
-            known.push(socket);
-            known.len() - 1
-        }
-    }
-}
-
 impl Tileset {
     fn from_config(config: Config) -> Self {
         let mut sockets: Vec<Socket> = Vec::new();
         let mut tiles: Vec<Tile> = Vec::new();
+
+        let register_socket = |known: &mut Vec<Socket>, socket: Socket| -> SocketId {
+            match known.iter().position(|s| s.0 == socket.0) {
+                Some(id) => id,
+                None => {
+                    known.push(socket);
+                    known.len() - 1
+                }
+            }
+        };
 
         for original in config.tiles {
             let adj = original.adjacencies;
@@ -240,14 +240,6 @@ impl Grid {
         if count > 1 {
             self.heap.push((Reverse(count), self.noise[i], i));
         }
-    }
-
-    fn get(&self, x: usize, y: usize) -> &Cell {
-        &self.cells[y * self.width + x]
-    }
-
-    fn get_mut(&mut self, x: usize, y: usize) -> &mut Cell {
-        &mut self.cells[y * self.width + x]
     }
 
     fn neighbor(&self, i: usize, dir: Direction) -> Option<usize> {
@@ -408,8 +400,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             format!("cannot read {}: {error}", config_path.display()),
         )
     })?;
-    let _config: Config = toml::from_str(&text)?;
-    let tileset: Tileset = Tileset::from_config(_config);
+    let config: Config = toml::from_str(&text)?;
+    let tileset: Tileset = Tileset::from_config(config);
     let mut rng = rand::rng();
     let mut grid: Grid = Grid::new(width, height, tileset.tiles.len(), &mut rng);
 
