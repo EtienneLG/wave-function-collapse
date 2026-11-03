@@ -6,16 +6,11 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 
 type HeapEntry = (Reverse<u32>, u32, usize);
 
-#[derive(Debug, Clone)]
-struct Cell {
-    possible: Mask,
-}
-
 #[derive(Debug)]
 pub(crate) struct Grid {
     width: usize,
     height: usize,
-    cells: Vec<Cell>, // flat 2D grid
+    cells: Vec<Mask>, // flat 2D grid
     heap: BinaryHeap<HeapEntry>,
     noise: Vec<u32>,
 }
@@ -28,9 +23,7 @@ impl Grid {
         } else {
             (1 << tile_count) - 1
         };
-        let cells: Vec<Cell> = (0..width * height)
-            .map(|_| Cell { possible: all })
-            .collect();
+        let cells: Vec<Mask> = (0..width * height).map(|_| all).collect();
         let noise: Vec<u32> = (0..width * height).map(|_| rng.random()).collect();
 
         let mut grid = Self {
@@ -49,7 +42,7 @@ impl Grid {
     }
 
     pub(crate) fn possible(&self, i: usize) -> Mask {
-        self.cells[i].possible
+        self.cells[i]
     }
 
     fn rebuild_heap(&mut self, tileset: &Tileset) {
@@ -60,7 +53,7 @@ impl Grid {
     }
 
     fn push_entropy(&mut self, tileset: &Tileset, i: usize) {
-        let possible = self.cells[i].possible;
+        let possible = self.cells[i];
         if possible.count_ones() > 1 {
             self.heap
                 .push((Reverse(tileset.entropy_units(possible)), self.noise[i], i));
@@ -79,7 +72,7 @@ impl Grid {
 
     pub(crate) fn pop_lowest_entropy(&mut self, tileset: &Tileset) -> Option<usize> {
         while let Some((Reverse(entropy), _, i)) = self.heap.pop() {
-            let possible = self.cells[i].possible;
+            let possible = self.cells[i];
             if possible.count_ones() > 1 && tileset.entropy_units(possible) == entropy {
                 return Some(i);
             }
@@ -93,8 +86,8 @@ impl Grid {
         i: usize,
         tile: usize,
     ) -> Result<(), usize> {
-        debug_assert!(self.cells[i].possible & ((1 as Mask) << tile) != 0);
-        self.cells[i].possible = (1 as Mask) << tile;
+        debug_assert!(self.cells[i] & ((1 as Mask) << tile) != 0);
+        self.cells[i] = (1 as Mask) << tile;
         self.propagate(tileset, i)
     }
 
@@ -102,7 +95,7 @@ impl Grid {
         let mut stack = vec![start];
 
         while let Some(i) = stack.pop() {
-            let current = self.cells[i].possible;
+            let current = self.cells[i];
 
             for dir in Direction::ALL {
                 let Some(n) = self.neighbor(i, dir) else {
@@ -117,7 +110,7 @@ impl Grid {
                     support |= tileset.allowed_for(dir)[t];
                 }
 
-                let old = self.cells[n].possible;
+                let old = self.cells[n];
                 let new = old & support;
 
                 if new == old {
@@ -127,7 +120,7 @@ impl Grid {
                     return Err(n);
                 }
 
-                self.cells[n].possible = new;
+                self.cells[n] = new;
                 self.push_entropy(tileset, n);
                 stack.push(n);
             }
@@ -148,8 +141,8 @@ impl Grid {
             let px = (i % self.width) as i64 * tw as i64;
             let py = (i / self.width) as i64 * th as i64;
 
-            let tile_image = if cell.possible.count_ones() == 1 {
-                &images[cell.possible.trailing_zeros() as usize]
+            let tile_image = if cell.count_ones() == 1 {
+                &images[cell.trailing_zeros() as usize]
             } else {
                 &unresolved
             };
