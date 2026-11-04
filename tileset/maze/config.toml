@@ -1,0 +1,32 @@
+format = "png"
+
+# [[tiles]]
+# name = "plain"
+# rotate = false
+# adjacencies = { north = "void", east = "void", south = "void", west = "void" }
+
+[[tiles]]
+name = "end"
+rotate = true
+adjacencies = { north = "middle", east = "void", south = "void", west = "void" }
+
+[[tiles]]
+name = "passage"
+rotate = true
+weight = 30
+adjacencies = { north = "void", east = "middle", south = "void", west = "middle" }
+
+[[tiles]]
+name = "corner"
+rotate = true
+adjacencies = { north = "middle", east = "middle", south = "void", west = "void" }
+
+[[tiles]]
+name = "t_pipe"
+rotate = true
+adjacencies = { north = "void", east = "middle", south = "middle", west = "middle" }
+
+[[tiles]]
+name = "intersection"
+rotate = false
+adjacencies = { north = "middle", east = "middle", south = "middle", west = "middle" }

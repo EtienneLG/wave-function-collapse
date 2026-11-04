@@ -1,0 +1,71 @@
+format = "png"
+
+[[pairs]]
+a = "right_space"
+b = "left_space"
+
+[[tiles]]
+name = "change"
+rotate = true
+adjacencies = { north = "void", east = "middle", south = "middle", west = "middle"}
+
+[[tiles]]
+name = "corner"
+rotate = true
+adjacencies = { north = "void", east = "middle", south = "middle", west = "void"}
+
+[[tiles]]
+name = "end"
+rotate = true
+adjacencies = { north = "void", east = "void", south = "middle", west = "void"}
+
+[[tiles]]
+name = "intersection"
+rotate = false
+adjacencies = { north = "middle", east = "middle", south = "middle", west = "middle"}
+
+[[tiles]]
+name = "passage"
+rotate = true
+weight = 20
+adjacencies = { north = "middle", east = "void", south = "middle", west = "void"}
+
+[[tiles]]
+name = "space_block"
+rotate = true
+adjacencies = { north = "space", east = "space", south = "left_space", west = "right_space"}
+
+[[tiles]]
+name = "space_corner"
+rotate = true
+adjacencies = { north = "void", east = "right_space", south = "left_space", west = "void"}
+
+[[tiles]]
+name = "space_intersection"
+rotate = true
+adjacencies = { north = "right_space", east = "left_space", south = "middle", west = "middle"}
+
+[[tiles]]
+name = "space_middle_op"
+rotate = true
+adjacencies = { north = "void", east = "middle", south = "right_space", west = "left_space"}
+
+[[tiles]]
+name = "space_middle"
+rotate = true
+adjacencies = { north = "void", east = "right_space", south = "left_space", west = "middle"}
+
+[[tiles]]
+name = "space_passage"
+rotate = true
+adjacencies = { north = "space", east = "left_space", south = "void", west = "right_space"}
+
+[[tiles]]
+name = "space"
+rotate = true
+adjacencies = { north = "space", east = "space", south = "space", west = "space"}
+
+[[tiles]]
+name = "void"
+rotate = true
+adjacencies = { north = "void", east = "void", south = "void", west = "void"}

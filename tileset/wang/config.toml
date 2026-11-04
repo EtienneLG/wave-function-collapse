@@ -1,0 +1,56 @@
+format = "png"
+
+[[tiles]]
+name = "01"
+rotate = true
+adjacencies = { north = "red", east = "red", south = "red", west = "green" }
+
+[[tiles]]
+name = "02"
+rotate = true
+adjacencies = { north = "blue", east = "red", south = "blue", west = "green" }
+
+[[tiles]]
+name = "03"
+rotate = true
+adjacencies = { north = "red", east = "green", south = "green", west = "green" }
+
+[[tiles]]
+name = "04"
+rotate = true
+adjacencies = { north = "void", east = "blue", south = "red", west = "blue" }
+
+[[tiles]]
+name = "05"
+rotate = true
+adjacencies = { north = "blue", east = "blue", south = "void", west = "blue" }
+
+[[tiles]]
+name = "06"
+rotate = true
+adjacencies = { north = "void", east = "void", south = "red", west = "void" }
+
+[[tiles]]
+name = "07"
+rotate = true
+adjacencies = { north = "red", east = "green", south = "blue", west = "void" }
+
+[[tiles]]
+name = "08"
+rotate = true
+adjacencies = { north = "blue", east = "void", south = "blue", west = "red" }
+
+[[tiles]]
+name = "09"
+rotate = true
+adjacencies = { north = "blue", east = "red", south = "void", west = "red" }
+
+[[tiles]]
+name = "10"
+rotate = true
+adjacencies = { north = "green", east = "green", south = "blue", west = "red" }
+
+[[tiles]]
+name = "11"
+rotate = true
+adjacencies = { north = "red", east = "void", south = "red", west = "green" }
